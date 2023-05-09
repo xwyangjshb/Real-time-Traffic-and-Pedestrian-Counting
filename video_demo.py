@@ -5,7 +5,6 @@
 #   Created date: 2019-11-14
 #
 # ================================================================
-
 import cv2
 import time
 import numpy as np
@@ -16,7 +15,7 @@ from core.yolov3 import YOLOv3, decode
 video_path = "./vehicle.mp4"
 
 writeVideo_flag = True
-# video_path      = 0 # 调用本机物理摄像头
+video_path      = 0 # 调用本机物理摄像头
 #num_classes     = 80
 num_classes = 80
 input_size = 416
@@ -41,6 +40,8 @@ if writeVideo_flag:
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     video_writer = cv2.VideoWriter("./output.mp4", fourcc, 24, (w, h))
 
+print("w=", int(vid.get(3)))
+print("h=", int(vid.get(4)))
 
 frame_no = 0
 while True:
@@ -77,15 +78,20 @@ while True:
     # result = np.asarray(image)
     # cv2.putText(result, text=fps, org=(50, 70), fontFace=cv2.FONT_HERSHEY_SIMPLEX,
     #             fontScale=1, color=(255, 0, 0), thickness=2)
-    cv2.namedWindow("result", cv2.WINDOW_AUTOSIZE)
+    
+#    cv2.namedWindow("result", cv2.WINDOW_AUTOSIZE)
     result = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-    cv2.imshow("result", result)
+#    cv2.imshow("result", result)
+    cv2.imwrite("./test.jpg",result)
+    print("111..")
 
     #### 录制视频 ####
     # 注意 目录output必须存在
     video_writer.write(result)
-
-    if cv2.waitKey(1) & 0xFF == ord('q'):
+    time.sleep(1)
+    
+#    if cv2.waitKey(1) & 0xFF == ord('q'):
+    if 0xFF == ord('q'):
         break
 
 
