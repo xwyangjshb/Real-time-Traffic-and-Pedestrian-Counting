@@ -18,10 +18,9 @@ class BatchNormalization(tf.keras.layers.BatchNormalization):
     """
 
     def call(self, x, training=False):
-        if not training:
-            training = tf.constant(False)
-        training = tf.logical_and(training, self.trainable)
-        return super().call(x, training)
+        if self.trainable:
+            return super().call(x, training=training)
+        return super().call(x, training=False)
 
 
 def convolutional(input_layer, filters_shape, downsample=False, activate=True, bn=True):
@@ -43,7 +42,7 @@ def convolutional(input_layer, filters_shape, downsample=False, activate=True, b
     if bn:
         conv = BatchNormalization()(conv)
     if activate == True:
-        conv = tf.nn.leaky_relu(conv, alpha=0.1)
+        conv = tf.keras.layers.LeakyReLU(alpha=0.1)(conv)
 
     return conv
 
@@ -60,4 +59,4 @@ def residual_block(input_layer, input_channel, filter_num1, filter_num2):
 
 
 def upsample(input_layer):
-    return tf.image.resize(input_layer, (input_layer.shape[1] * 2, input_layer.shape[2] * 2), method='nearest')
+    return tf.keras.layers.UpSampling2D(size=(2, 2), interpolation='nearest')(input_layer)

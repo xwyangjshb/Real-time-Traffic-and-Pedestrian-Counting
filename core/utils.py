@@ -87,7 +87,7 @@ def load_weights(model, weights_file):
         conv_layer = model.get_layer(conv_layer_name)
         filters = conv_layer.filters
         k_size = conv_layer.kernel_size[0]
-        in_dim = conv_layer.input_shape[-1]
+        in_dim = conv_layer.kernel.shape[-2]
 
         if i not in [58, 66, 74]:
             # darknet weights: [beta, gamma, mean, variance]

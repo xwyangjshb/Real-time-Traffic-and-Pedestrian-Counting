@@ -36,7 +36,7 @@ def YOLOv3(input_layer):
     conv = common.convolutional(conv, (1, 1,  512,  256))
     conv = common.upsample(conv)
 
-    conv = tf.concat([conv, route_2], axis=-1)
+    conv = tf.keras.layers.Concatenate(axis=-1)([conv, route_2])
 
     conv = common.convolutional(conv, (1, 1, 768, 256))
     conv = common.convolutional(conv, (3, 3, 256, 512))
@@ -51,7 +51,7 @@ def YOLOv3(input_layer):
     conv = common.convolutional(conv, (1, 1, 256, 128))
     conv = common.upsample(conv)
 
-    conv = tf.concat([conv, route_1], axis=-1)
+    conv = tf.keras.layers.Concatenate(axis=-1)([conv, route_1])
 
     conv = common.convolutional(conv, (1, 1, 384, 128))
     conv = common.convolutional(conv, (3, 3, 128, 256))

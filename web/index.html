@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>铁路沿线征用拆迁系统AI识别</title>
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #0d1117;
+      --surface:   #161b22;
+      --border:    #30363d;
+      --accent:    #1f6feb;
+      --accent2:   #388bfd;
+      --text:      #e6edf3;
+      --muted:     #8b949e;
+      --green:     #3fb950;
+      --orange:    #d29922;
+      --red:       #f85149;
+      --radius:    8px;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, "Segoe UI", sans-serif;
+      font-size: 14px;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── header ── */
+    header {
+      background: linear-gradient(135deg, #0f2942 0%, #0d1117 100%);
+      border-bottom: 1px solid var(--border);
+      padding: 18px 32px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .header-icon {
+      width: 42px; height: 42px;
+      background: var(--accent);
+      border-radius: 10px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 22px;
+    }
+    .header-title h1 { font-size: 20px; font-weight: 700; letter-spacing: .5px; }
+    .header-title p  { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+    /* ── layout ── */
+    .layout {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    /* ── sidebar ── */
+    aside {
+      width: 260px;
+      min-width: 220px;
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .sidebar-header {
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--border);
+      font-weight: 600;
+      font-size: 13px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .6px;
+    }
+    .video-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px;
+    }
+    .video-card {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px;
+      margin-bottom: 8px;
+      cursor: pointer;
+      transition: border-color .2s, background .2s;
+    }
+    .video-card:hover { border-color: var(--accent2); background: #0f1923; }
+    .video-card.active { border-color: var(--accent); background: #0f1f35; }
+    .video-card .vid-id {
+      font-weight: 600; font-size: 13px; margin-bottom: 4px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .video-card .vid-meta { font-size: 11px; color: var(--muted); line-height: 1.6; }
+    .video-card .vid-badges {
+      display: flex; gap: 4px; flex-wrap: wrap; margin-top: 6px;
+    }
+    .badge {
+      font-size: 11px; padding: 2px 7px;
+      border-radius: 20px; font-weight: 600;
+    }
+    .badge-pole   { background: #1a3d1a; color: var(--green);  border: 1px solid #2d5a2d; }
+    .badge-tower  { background: #3d2e00; color: var(--orange); border: 1px solid #5a4400; }
+    .badge-fiber  { background: #3d0f0f; color: var(--red);    border: 1px solid #5a1a1a; }
+
+    .empty-list {
+      padding: 32px 16px; text-align: center; color: var(--muted); font-size: 13px;
+    }
+
+    /* ── main area ── */
+    main {
+      flex: 1;
+      overflow-y: auto;
+      padding: 24px;
+    }
+
+    /* placeholder */
+    .placeholder {
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      height: 100%; min-height: 400px;
+      color: var(--muted); gap: 12px;
+    }
+    .placeholder .ph-icon { font-size: 56px; opacity: .3; }
+    .placeholder p { font-size: 15px; }
+
+    /* ── stats cards ── */
+    .stats-row {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+    .stat-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px 24px;
+      display: flex; align-items: center; gap: 16px;
+    }
+    .stat-icon { font-size: 32px; }
+    .stat-info .label { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+    .stat-info .value { font-size: 32px; font-weight: 700; line-height: 1; }
+    .stat-info .note  { font-size: 11px; color: var(--muted); margin-top: 4px; }
+    .stat-card.pole   { border-left: 3px solid var(--green);  }
+    .stat-card.tower  { border-left: 3px solid var(--orange); }
+    .stat-card.fiber  { border-left: 3px solid var(--red);    }
+    .val-pole  { color: var(--green);  }
+    .val-tower { color: var(--orange); }
+    .val-fiber { color: var(--red);    }
+
+    /* ── section ── */
+    .section {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      margin-bottom: 20px;
+      overflow: hidden;
+    }
+    .section-title {
+      padding: 12px 18px;
+      border-bottom: 1px solid var(--border);
+      font-weight: 600; font-size: 13px; color: var(--muted);
+      text-transform: uppercase; letter-spacing: .5px;
+    }
+    .section-body { padding: 16px 18px; }
+
+    /* ── charts ── */
+    #chart-bar  { width: 100%; height: 240px; }
+    #chart-line { width: 100%; height: 260px; }
+
+    /* ── video player ── */
+    .video-wrap {
+      position: relative;
+      background: #000;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .video-wrap video {
+      width: 100%; display: block;
+      max-height: 480px; object-fit: contain;
+    }
+    .video-info {
+      display: flex; gap: 20px; flex-wrap: wrap;
+      margin-top: 10px; font-size: 12px; color: var(--muted);
+    }
+    .video-info span b { color: var(--text); }
+
+    /* ── footer ── */
+    footer {
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      padding: 12px 32px;
+      display: flex; align-items: center; gap: 10px;
+      font-size: 12px; color: var(--muted);
+    }
+    footer .tag {
+      background: #2d2000; color: var(--orange);
+      border: 1px solid #5a4000;
+      padding: 2px 8px; border-radius: 4px; font-weight: 600; font-size: 11px;
+    }
+
+    /* ── scrollbar ── */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  </style>
+</head>
+<body>
+
+<!-- ── Header ── -->
+<header>
+  <div class="header-icon">🛰️</div>
+  <div class="header-title">
+    <h1>铁路沿线征用拆迁系统 AI 识别</h1>
+    <p>基于 YOLOv3 无人机视频分析平台 · 电线杆 / 铁塔 / 光纤标识自动检测与统计</p>
+  </div>
+</header>
+
+<!-- ── Layout ── -->
+<div class="layout">
+
+  <!-- Sidebar -->
+  <aside>
+    <div class="sidebar-header">已处理视频</div>
+    <div class="video-list" id="videoList">
+      <div class="empty-list">加载中…</div>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <main id="mainArea">
+    <div class="placeholder" id="placeholder">
+      <div class="ph-icon">📡</div>
+      <p>请从左侧选择一条已处理的视频</p>
+    </div>
+
+    <!-- Content (hidden until video selected) -->
+    <div id="content" style="display:none;">
+
+      <!-- Stats cards -->
+      <div class="stats-row">
+        <div class="stat-card pole">
+          <div class="stat-icon">🔦</div>
+          <div class="stat-info">
+            <div class="label">电线杆（估算）</div>
+            <div class="value val-pole" id="cnt-pole">—</div>
+            <div class="note">累计检测次数</div>
+          </div>
+        </div>
+        <div class="stat-card tower">
+          <div class="stat-icon">🏗️</div>
+          <div class="stat-info">
+            <div class="label">铁塔（估算）</div>
+            <div class="value val-tower" id="cnt-tower">—</div>
+            <div class="note">累计检测次数</div>
+          </div>
+        </div>
+        <div class="stat-card fiber">
+          <div class="stat-icon">📡</div>
+          <div class="stat-info">
+            <div class="label">光纤标识（估算）</div>
+            <div class="value val-fiber" id="cnt-fiber">—</div>
+            <div class="note">累计检测次数</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Bar chart -->
+      <div class="section">
+        <div class="section-title">各类别检测总量</div>
+        <div class="section-body">
+          <div id="chart-bar"></div>
+        </div>
+      </div>
+
+      <!-- Video player -->
+      <div class="section">
+        <div class="section-title">标注视频回放</div>
+        <div class="section-body">
+          <div class="video-wrap">
+            <video id="videoPlayer" controls></video>
+          </div>
+          <div class="video-info" id="videoMeta"></div>
+        </div>
+      </div>
+
+      <!-- Timeline chart -->
+      <div class="section">
+        <div class="section-title">逐帧检测时序</div>
+        <div class="section-body">
+          <div id="chart-line"></div>
+        </div>
+      </div>
+
+    </div>
+  </main>
+</div>
+
+<!-- ── Footer ── -->
+<footer>
+  <span class="tag">DEMO</span>
+  <span>仅分析视频前 <b>30 秒</b>，抽帧率 <b>1 fps</b>，统计值为检测累加估算，不做跨帧去重 &nbsp;·&nbsp; 当前模型使用 COCO 预训练权重，类别为占位符，正式部署需替换自定义模型</span>
+</footer>
+
+<script>
+  let barChart  = null;
+  let lineChart = null;
+
+  // ── 初始化 ECharts ──────────────────────────────────────────────────────────
+  function initCharts() {
+    barChart  = echarts.init(document.getElementById('chart-bar'),  'dark');
+    lineChart = echarts.init(document.getElementById('chart-line'), 'dark');
+    window.addEventListener('resize', () => {
+      barChart.resize();
+      lineChart.resize();
+    });
+  }
+
+  // ── 加载视频列表 ────────────────────────────────────────────────────────────
+  async function loadVideoList() {
+    const listEl = document.getElementById('videoList');
+    try {
+      const res  = await fetch('/api/video_list');
+      const list = await res.json();
+
+      if (!list.length) {
+        listEl.innerHTML = '<div class="empty-list">暂无已处理视频<br>请先运行 drone_analysis.py</div>';
+        return;
+      }
+
+      listEl.innerHTML = '';
+      list.forEach(v => {
+        const t = v.totals || {};
+        const card = document.createElement('div');
+        card.className = 'video-card';
+        card.dataset.id = v.video_id;
+        card.innerHTML = `
+          <div class="vid-id" title="${v.video_id}">${v.video_id}</div>
+          <div class="vid-meta">
+            ${v.resolution || ''}　${v.processed_at ? v.processed_at.replace('T', ' ') : ''}
+          </div>
+          <div class="vid-badges">
+            <span class="badge badge-pole">电线杆 ${t['电线杆'] ?? 0}</span>
+            <span class="badge badge-tower">铁塔 ${t['铁塔'] ?? 0}</span>
+            <span class="badge badge-fiber">光纤 ${t['光纤标识'] ?? 0}</span>
+          </div>`;
+        card.addEventListener('click', () => selectVideo(v.video_id));
+        listEl.appendChild(card);
+      });
+    } catch (e) {
+      listEl.innerHTML = '<div class="empty-list">列表加载失败</div>';
+    }
+  }
+
+  // ── 选择视频 ────────────────────────────────────────────────────────────────
+  async function selectVideo(videoId) {
+    // 高亮卡片
+    document.querySelectorAll('.video-card').forEach(c => {
+      c.classList.toggle('active', c.dataset.id === videoId);
+    });
+
+    try {
+      const res   = await fetch(`/api/video_stats/${videoId}`);
+      const stats = await res.json();
+
+      document.getElementById('placeholder').style.display = 'none';
+      document.getElementById('content').style.display     = 'block';
+
+      updateStatCards(stats);
+      updateBarChart(stats);
+      updateVideo(stats);
+      updateLineChart(stats);
+    } catch (e) {
+      alert('统计数据加载失败：' + e.message);
+    }
+  }
+
+  // ── 更新统计卡片 ────────────────────────────────────────────────────────────
+  function updateStatCards(stats) {
+    const t = stats.totals || {};
+    document.getElementById('cnt-pole').textContent  = t['电线杆']  ?? 0;
+    document.getElementById('cnt-tower').textContent = t['铁塔']    ?? 0;
+    document.getElementById('cnt-fiber').textContent = t['光纤标识'] ?? 0;
+  }
+
+  // ── 更新柱状图 ──────────────────────────────────────────────────────────────
+  function updateBarChart(stats) {
+    const t = stats.totals || {};
+    const categories = ['电线杆', '铁塔', '光纤标识'];
+    const values     = categories.map(k => t[k] ?? 0);
+    const colors     = ['#3fb950', '#d29922', '#f85149'];
+
+    barChart.setOption({
+      backgroundColor: 'transparent',
+      tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+      grid: { left: 40, right: 20, top: 20, bottom: 30 },
+      xAxis: {
+        type: 'category',
+        data: categories,
+        axisLabel: { color: '#8b949e', fontSize: 13 },
+        axisLine: { lineStyle: { color: '#30363d' } },
+      },
+      yAxis: {
+        type: 'value',
+        minInterval: 1,
+        axisLabel: { color: '#8b949e' },
+        splitLine: { lineStyle: { color: '#21262d' } },
+      },
+      series: [{
+        type: 'bar',
+        data: values.map((v, i) => ({ value: v, itemStyle: { color: colors[i], borderRadius: [4, 4, 0, 0] } })),
+        barMaxWidth: 80,
+        label: { show: true, position: 'top', color: '#e6edf3', fontWeight: 600 },
+      }],
+    });
+  }
+
+  // ── 更新视频播放器 ──────────────────────────────────────────────────────────
+  function updateVideo(stats) {
+    const player  = document.getElementById('videoPlayer');
+    const metaEl  = document.getElementById('videoMeta');
+
+    if (stats.annotated_video) {
+      player.src = `/output/${stats.annotated_video}`;
+      player.load();
+    }
+
+    metaEl.innerHTML = `
+      <span>分辨率 <b>${stats.resolution || '—'}</b></span>
+      <span>源帧率 <b>${stats.source_fps ?? '—'} fps</b></span>
+      <span>处理时长 <b>${stats.duration_processed_s ?? 30} s</b></span>
+      <span>抽帧数 <b>${stats.frames_processed ?? '—'} 帧</b></span>
+      <span>处理时间 <b>${(stats.processed_at || '').replace('T', ' ')}</b></span>`;
+  }
+
+  // ── 更新时序折线图 ──────────────────────────────────────────────────────────
+  function updateLineChart(stats) {
+    const frames = stats.per_frame || [];
+    const ts     = frames.map(f => f.timestamp.toFixed(1) + 's');
+    const keys   = ['电线杆', '铁塔', '光纤标识'];
+    const colors = ['#3fb950', '#d29922', '#f85149'];
+
+    const series = keys.map((k, i) => ({
+      name: k,
+      type: 'line',
+      smooth: true,
+      symbol: 'circle',
+      symbolSize: 5,
+      lineStyle: { color: colors[i], width: 2 },
+      itemStyle: { color: colors[i] },
+      data: frames.map(f => (f.counts[k] ?? 0)),
+    }));
+
+    lineChart.setOption({
+      backgroundColor: 'transparent',
+      tooltip: { trigger: 'axis' },
+      legend: {
+        data: keys,
+        textStyle: { color: '#8b949e' },
+        top: 4,
+      },
+      grid: { left: 40, right: 20, top: 36, bottom: 30 },
+      xAxis: {
+        type: 'category',
+        data: ts,
+        axisLabel: { color: '#8b949e', interval: Math.floor(ts.length / 10) || 0 },
+        axisLine: { lineStyle: { color: '#30363d' } },
+      },
+      yAxis: {
+        type: 'value',
+        minInterval: 1,
+        axisLabel: { color: '#8b949e' },
+        splitLine: { lineStyle: { color: '#21262d' } },
+      },
+      series,
+    });
+  }
+
+  // ── 启动 ────────────────────────────────────────────────────────────────────
+  initCharts();
+  loadVideoList();
+</script>
+</body>
+</html>
