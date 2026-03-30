@@ -17,6 +17,7 @@ import time
 import numpy as np
 import requests
 from datetime import datetime
+from translate import Translator
 from io import BytesIO
 from PIL import Image, ImageDraw, ImageFont
 
@@ -35,7 +36,7 @@ API_MAX_RETRIES = 3       # 最大重试次数
 API_RETRY_DELAY = 2       # 服务器错误重试延迟（秒）
 
 # 分割参数
-TEXT_PROMPTS     = ["icon tower", "utility pole", "street light"]
+TEXT_PROMPTS     = ["icon tower", "utility pole", "fiber"]
 BOX_THRESHOLD    = 0.25
 TEXT_THRESHOLD   = 0.25
 NMS_THRESHOLD    = 0.8
@@ -50,14 +51,45 @@ TILE_OVERLAP     = 0.1       # tile 重叠比例 (10%)
 MASK_ALPHA       = 0.3    # mask 填充透明度 (0.0-1.0)
 BORDER_THICKNESS = 2      # polygon 边框粗细
 
+# 英中类别名称映射
+CLASS_NAME_ZH = {
+    # "icon tower":    "铁塔",
+    # "utility pole":  "电线杆",
+    "street light":  "路灯",
+    # "fiber":         "光纤",
+    "person":        "行人",
+    "car":           "汽车",
+    "bicycle":       "自行车",
+    "motorcycle":    "摩托车",
+    "bus":           "公交车",
+    "truck":         "卡车",
+}
+
+# 反向映射：中文名称 → 英文名称
+CLASS_NAME_EN = {v: k for k, v in CLASS_NAME_ZH.items()}
+
 # 颜色映射 (BGR 格式)
 PROMPT_COLORS = {
-    "icon tower":    (127, 255,   0),  # 亮绿色
-    "utility pole":  (255, 165,   0),  # 橙色
-    "street light":  (0,   80,  255),  # 红色
-    # 保留其他类别作为备选
-    "person":        (0,   255, 255),  # 黄色
-    "car":           (255, 0,   255),  # 紫色
+    # 中文类别（主要使用）
+    "铁塔":         (0,   255,   0),  # 亮绿色 - 铁塔
+    "电线杆":       (255, 165,   0),  # 橙色 - 电线杆
+    "路灯":         (0,   80,  255),  # 红色 - 路灯
+    "光纤":         (255, 0,   0),    # 蓝色 - 光纤
+    "房屋":         (255, 0,   255),  # 紫色 - 房屋
+    "烟囱":         (0,   255, 255),  # 黄色 - 烟囱
+    "行人":         (203, 192, 255),  # 粉色 - 行人
+    "汽车":         (128, 0,   128),  # 深紫色 - 汽车
+    "自行车":       (255, 105, 180),  # 粉红色 - 自行车
+    "摩托车":       (139, 0,   139),  # 深洋红 - 摩托车
+    "公交车":       (255, 191,   0),  # 深金色 - 公交车
+    "卡车":         (0,   128, 128),  # 青色 - 卡车
+    # 英文类别（保留兼容）
+    "icon tower":   (0,   255,   0),  # 亮绿色
+    "utility pole": (255, 165,   0),  # 橙色
+    "street light": (0,   80,  255),  # 红色
+    "fiber":        (255, 0,   0),    # 蓝色
+    "person":       (203, 192, 255),  # 粉色
+    "car":          (128, 0,   128),  # 深紫色
 }
 
 
@@ -199,11 +231,12 @@ class SegmentationAPI:
             标准化的 masks 列表
         """
         try:
+            # print(f"  [调试] API 返回 :{response_json}")
             # 验证响应结构
             if "masks" not in response_json:
                 print(f"  [警告] API 响应缺少 'masks' 字段: {response_json.keys()}")
                 return []
-            # print(f"  [调试] API 返回 :{response_json}")
+            
             masks = response_json["masks"]
             if not isinstance(masks, list):
                 print(f"  [警告] 'masks' 不是列表类型")
@@ -507,8 +540,301 @@ def _compute_centroid(polygon):
 
 
 def _get_mask_color(name):
-    """获取类别对应的颜色"""
-    return PROMPT_COLORS.get(name, (0, 255, 255))  # 默认黄色
+    """
+    获取类别对应的颜色（支持动态生成）
+
+    优先使用预定义颜色，如果未定义则基于类别名称哈希生成独特颜色
+
+    Args:
+        name: 类别名称
+
+    Returns:
+        tuple: BGR 格式颜色 (b, g, r)
+    """
+    # 1. 优先使用预定义颜色
+    if name in PROMPT_COLORS:
+        return PROMPT_COLORS[name]
+
+    # 2. 基于类别名称生成独特的颜色
+    # 使用哈希确保相同的类别名称总是得到相同的颜色
+    import hashlib
+    hash_obj = hashlib.md5(name.encode('utf-8'))
+    hash_hex = hash_obj.hexdigest()
+
+    # 从哈希值生成RGB，确保颜色鲜艳且可见
+    # 使用 HSV 转 RGB 的思路生成鲜艳的颜色
+    r = int(hash_hex[0:2], 16) % 200 + 55  # 55-255
+    g = int(hash_hex[2:4], 16) % 200 + 55  # 55-255
+    b = int(hash_hex[4:6], 16) % 200 + 55  # 55-255
+
+    # 返回 BGR 格式
+    return (b, g, r)
+
+
+def _get_chinese_name(name_en):
+    """
+    将英文类别名转换为中文
+
+    Args:
+        name_en: 英文类别名
+
+    Returns:
+        中文名称，如果未找到则返回原英文名
+    """
+    return CLASS_NAME_ZH.get(name_en, name_en)
+
+
+def _get_chinese_name_with_map(name_en, en_to_zh_map=None):
+    """
+    将英文类别名转换为中文（优先使用映射表）
+
+    Args:
+        name_en: 英文类别名
+        en_to_zh_map: 英文→中文 映射表（优先级高于字典）
+
+    Returns:
+        中文名称，如果未找到则返回原英文名
+    """
+    # 1. 优先使用用户提供的映射表（来自用户输入）
+    if en_to_zh_map and name_en in en_to_zh_map:
+        return en_to_zh_map[name_en]
+
+    # 2. 使用本地字典
+    return CLASS_NAME_ZH.get(name_en, name_en)
+
+
+def _contains_chinese(text):
+    """检测字符串是否包含中文字符"""
+    if not text or not isinstance(text, str):
+        return False
+    return any('\u4e00' <= char <= '\u9fff' for char in text)
+
+
+def _translate_to_english(text_zh):
+    """
+    将中文翻译为英文（优先使用本地字典）
+
+    Args:
+        text_zh: 中文文本
+
+    Returns:
+        str: 英文翻译，失败则返回原输入
+    """
+    # 1. 优先使用本地字典
+    from_local = CLASS_NAME_EN.get(text_zh)
+    if from_local:
+        return from_local
+
+    # 2. 使用 translate 库
+    try:
+        translator = Translator(from_lang="zh", to_lang="en")
+        translation = translator.translate(text_zh)
+        if translation and translation != text_zh:
+            return translation
+        else:
+            print(f"  [警告] 翻译失败，使用原输入")
+            return text_zh
+    except Exception as e:
+        print(f"  [错误] 翻译异常: {e}，使用原输入")
+        return text_zh
+
+
+def _translate_to_chinese(text_en):
+    """
+    将英文翻译为中文（优先使用本地字典）
+
+    Args:
+        text_en: 英文文本
+
+    Returns:
+        str: 中文翻译，失败则返回原输入
+    """
+    # 1. 优先使用本地字典
+    from_local = CLASS_NAME_ZH.get(text_en)
+    if from_local:
+        return from_local
+
+    # 2. 使用 translate 库
+    try:
+        translator = Translator(from_lang="en", to_lang="zh")
+        translation = translator.translate(text_en)
+        if translation and translation != text_en:
+            return translation
+        else:
+            print(f"  [警告] 翻译失败，使用原输入")
+            return text_en
+    except Exception as e:
+        print(f"  [错误] 翻译异常: {e}，使用原输入")
+        return text_en
+
+
+def _normalize_prompts(prompts):
+    """
+    标准化提示词列表：统一翻译为（英文用于API，中文用于显示）
+
+    Args:
+        prompts: 提示词列表，可能包含中文或英文
+
+    Returns:
+        tuple: (英文提示词列表, 中文提示词列表, 英文→中文映射表)
+        - 英文列表: 用于发送给 API
+        - 中文列表: 用于显示和 JSON 保存
+        - 映射表: API返回的英文 → 用户期望的中文
+
+    Example:
+        输入: ["铁塔", "utility pole", "建筑物"]
+        输出: (["icon tower", "utility pole", "building"],
+               ["铁塔", "电线杆", "建筑物"],
+               {"icon tower": "铁塔", "utility pole": "电线杆", "building": "建筑物"})
+    """
+    if prompts is None:
+        return None, None, {}
+
+    english_prompts = []
+    chinese_prompts = []
+    en_to_zh_map = {}  # 英文 → 中文 映射表
+
+    print(f"\n[翻译处理] 标准化提示词...")
+
+    for prompt in prompts:
+        if _contains_chinese(prompt):
+            # 输入是中文：翻译为英文给 API，保留中文用于显示
+            en = _translate_to_english(prompt)
+            english_prompts.append(en)
+            chinese_prompts.append(prompt)  # 保留原始中文
+            en_to_zh_map[en] = prompt  # 记录映射关系
+            if en != prompt:
+                print(f"  [翻译] '{prompt}' → '{en}' (API调用)")
+        else:
+            # 输入是英文：直接给 API，翻译为中文用于显示
+            zh = _translate_to_chinese(prompt)
+            english_prompts.append(prompt)  # 保留原始英文
+            chinese_prompts.append(zh)
+            en_to_zh_map[prompt] = zh  # 记录映射关系
+            if zh != prompt:
+                print(f"  [翻译] '{prompt}' → '{zh}' (显示)")
+            else:
+                print(f"  [保留] '{prompt}' (未找到中文映射)")
+
+    return english_prompts, chinese_prompts, en_to_zh_map
+
+
+def draw_masks_with_map(frame_bgr, masks, timestamp, en_to_zh_map=None):
+    """
+    在帧上绘制分割 masks（支持自定义英文→中文映射）
+
+    Args:
+        frame_bgr: BGR 格式图像
+        masks: mask 列表（来自 API）
+        timestamp: 时间戳（秒）
+        en_to_zh_map: 英文→中文 映射表（可选）
+
+    Returns:
+        绘制后的 BGR 图像
+    """
+    img   = frame_bgr.copy()
+    H, W  = img.shape[:2]
+    thick = max(1, int(0.6 * (H + W) / 1000))
+
+    # 创建半透明 overlay
+    overlay = img.copy()
+
+    for mask in masks:
+        name  = mask["name"]
+        score = mask["score"]
+        mask_data = mask["mask"]
+
+        # mask_data 是列表格式，可能是：
+        # 1. 多个团块：[[[x,y], ...], [[x,y], ...], ...] 或 [[[x,y], ...]], [[[x,y], ...]]
+        # 2. 单个团块：[[x,y], ...]
+
+        # 检查是否为空
+        if not mask_data or len(mask_data) == 0:
+            continue
+
+        color = _get_mask_color(name)
+        all_contours = []
+
+        # 尝试识别数据结构
+        try:
+            # 检查第一个元素的结构
+            first_element = mask_data[0]
+
+            # 如果第一个元素是列表且包含数字对 -> 单个团块 [[x,y], ...]
+            if isinstance(first_element, list) and len(first_element) > 0:
+                if isinstance(first_element[0], list):
+                    # [[[x,y], ...], ...] 或 [[[[x,y], ...]], [[[x,y], ...]]]
+                    # 多个团块的情况
+                    for blob in mask_data:
+                        if isinstance(blob, list):
+                            # 可能是 [[[x,y], ...]] 这种嵌套，需要展平
+                            if len(blob) > 0 and isinstance(blob[0], list):
+                                # 检查是否是 [[[x,y], ...]] 这种结构
+                                if len(blob[0]) > 0 and isinstance(blob[0][0], list):
+                                    # 需要再展开一层
+                                    for nested in blob:
+                                        if len(nested) >= 3:
+                                            contour = np.array(nested, dtype=np.int32)
+                                            all_contours.append(contour)
+                                elif len(blob) >= 3:
+                                    # 正常的 [[x,y], ...] 结构
+                                    contour = np.array(blob, dtype=np.int32)
+                                    all_contours.append(contour)
+                        elif len(blob) >= 3:
+                            # blob 本身就是 [[x,y], ...] 结构
+                            contour = np.array(blob, dtype=np.int32)
+                            all_contours.append(contour)
+                else:
+                    # 单个团块 [[x,y], ...]
+                    if len(mask_data) >= 3:
+                        contour = np.array(mask_data, dtype=np.int32)
+                        all_contours.append(contour)
+
+            if not all_contours:
+                continue
+
+            # 绘制所有团块
+            for contour in all_contours:
+                cv2.fillPoly(overlay, [contour], color)
+                cv2.polylines(img, [contour], True, color, thick)
+
+            # 计算质心（使用所有团块的点）
+            all_contour_points = np.vstack(all_contours)
+            cx, cy = _compute_centroid(all_contour_points)
+
+        except (IndexError, TypeError, ValueError) as e:
+            print(f"  [警告] 跳过无效的 mask 数据: {e}")
+            continue
+
+        # 标签背景 + 中文文字（使用映射表）
+        name_zh = _get_chinese_name_with_map(name, en_to_zh_map)
+        label = f"{name_zh} {score:.2f}"
+        bbox  = _FONT_LABEL.getbbox(label)
+        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+
+        # 确保标签不超出图像边界
+        label_x1 = max(0, cx - tw // 2)
+        label_y1 = max(0, cy - th - 8)
+        label_x2 = min(W, label_x1 + tw + 4)
+        label_y2 = max(0, cy)
+
+        cv2.rectangle(img, (label_x1, label_y1), (label_x2, label_y2), color, -1)
+        img = _put_cn_text(img, label, (label_x1 + 2, label_y1 + 2), (0, 0, 0), _FONT_LABEL)
+
+    # 混合 overlay 实现半透明效果
+    img = cv2.addWeighted(overlay, MASK_ALPHA, img, 1 - MASK_ALPHA, 0)
+
+    # 右上角水印
+    cv2.putText(img, f"t={timestamp:.1f}s", (W - 150, 40),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.9, (220, 220, 220), 2, cv2.LINE_AA)
+    cv2.putText(img, "SEGMENT 5fps/10s", (W - 230, 72),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (180, 180, 180), 1, cv2.LINE_AA)
+
+    # cv2.namedWindow(f"Segmentation -", cv2.WINDOW_NORMAL)
+    # cv2.imshow(f"Segmentation -", img)
+    # cv2.waitKey(0)
+
+    return img
 
 
 def draw_masks(frame_bgr, masks, timestamp):
@@ -598,7 +924,8 @@ def draw_masks(frame_bgr, masks, timestamp):
             continue
 
         # 标签背景 + 中文文字
-        label = f"{name} {score:.2f}"
+        name_zh = _get_chinese_name(name)
+        label = f"{name_zh} {score:.2f}"
         bbox  = _FONT_LABEL.getbbox(label)
         tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
 
@@ -632,7 +959,8 @@ def draw_masks(frame_bgr, masks, timestamp):
 def process_video(video_path, video_id=None, output_dir=OUTPUT_DIR,
                   api_base_url=None, prompts=None, max_duration=MAX_DURATION,
                   sample_fps=SAMPLE_FPS, output_fps=OUTPUT_FPS,
-                  use_slicing=False, tile_cols=TILE_COLS, tile_rows=TILE_ROWS, tile_overlap=TILE_OVERLAP):
+                  use_slicing=False, tile_cols=TILE_COLS, tile_rows=TILE_ROWS, tile_overlap=TILE_OVERLAP,
+                  split_segments=False):
     """
     处理视频：调用分割 API，绘制 masks，输出标注视频
 
@@ -642,7 +970,214 @@ def process_video(video_path, video_id=None, output_dir=OUTPUT_DIR,
         output_dir: 输出目录
         api_base_url: API 基础 URL
         prompts: 文本提示列表
-        max_duration: 处理前 N 秒
+        max_duration: 每个片段处理前 N 秒
+        sample_fps: 采样帧率
+        output_fps: 输出视频帧率
+        use_slicing: 是否使用切片模式
+        tile_cols: 横向分块数
+        tile_rows: 纵向分块数
+        tile_overlap: tile 重叠比例
+        split_segments: 是否将完整视频分割为多个片段处理
+
+    Returns:
+        统计信息字典（如果是分段模式，返回所有片段的统计信息）
+    """
+    if api_base_url is None:
+        raise ValueError("必须提供 --api_url 参数")
+
+    if prompts is None:
+        prompts = TEXT_PROMPTS
+
+    # 标准化提示词：统一翻译为（英文用于API，中文用于显示）
+    prompts_for_api, prompts_for_display, en_to_zh_map = _normalize_prompts(prompts)
+
+    # 打开视频获取基本信息
+    cap_info = cv2.VideoCapture(video_path)
+    if not cap_info.isOpened():
+        raise RuntimeError(f"无法打开视频: {video_path}")
+
+    src_fps      = cap_info.get(cv2.CAP_PROP_FPS) or 25.0
+    total_frames = int(cap_info.get(cv2.CAP_PROP_FRAME_COUNT))
+    total_duration = total_frames / src_fps
+    W = int(cap_info.get(cv2.CAP_PROP_FRAME_WIDTH))
+    H = int(cap_info.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    cap_info.release()
+
+    # 计算分段信息
+    if split_segments:
+        num_segments = int(total_duration // max_duration) + (1 if total_duration % max_duration > 0 else 0)
+        print(f"[INFO] ========== 分段模式 ==========")
+        print(f"[INFO] 视频总时长: {total_duration:.1f}s")
+        print(f"[INFO] 每段时长: {max_duration}s")
+        print(f"[INFO] 分段数量: {num_segments}")
+        print(f"[INFO] 分段详情:")
+        for i in range(num_segments):
+            start = i * max_duration
+            end = min((i + 1) * max_duration, total_duration)
+            duration = end - start
+            last = " (最后一段)" if i == num_segments - 1 else ""
+            print(f"[INFO]   片段{i+1}: {start:.1f}s - {end:.1f}s (时长 {duration:.1f}s){last}")
+        print(f"[INFO] ===============================\n")
+
+        # 存储所有片段的统计信息
+        all_segment_stats = []
+        merged_totals = {}
+
+        # 处理每个片段
+        for seg_idx in range(num_segments):
+            start_time = seg_idx * max_duration
+            end_time = min((seg_idx + 1) * max_duration, total_duration)
+            segment_duration = end_time - start_time
+
+            segment_id = f"{video_id}_seg{seg_idx+1:02d}"
+
+            print(f"\n{'='*60}")
+            print(f"[分段 {seg_idx+1}/{num_segments}] {segment_id}")
+            print(f"时间范围: {start_time:.1f}s - {end_time:.1f}s (时长 {segment_duration:.1f}s)")
+            print(f"{'='*60}\n")
+
+            # 处理单个片段
+            seg_stats = _process_single_segment(
+                video_path=video_path,
+                segment_id=segment_id,
+                output_dir=output_dir,
+                api_base_url=api_base_url,
+                prompts=prompts,
+                prompts_for_api=prompts_for_api,
+                prompts_for_display=prompts_for_display,
+                en_to_zh_map=en_to_zh_map,
+                max_duration=segment_duration,
+                start_time=start_time,
+                sample_fps=sample_fps,
+                output_fps=output_fps,
+                use_slicing=use_slicing,
+                tile_cols=tile_cols,
+                tile_rows=tile_rows,
+                tile_overlap=tile_overlap,
+            )
+
+            all_segment_stats.append(seg_stats)
+
+            # 合并统计
+            for name, count in seg_stats.get("totals", {}).items():
+                merged_totals[name] = merged_totals.get(name, 0) + count
+
+        # 创建合并后的统计信息
+        merged_stats = {
+            "video_id": video_id,
+            "source_path": video_path,
+            "processed_at": datetime.now().isoformat(timespec='seconds'),
+            "resolution": f"{W}x{H}",
+            "source_fps": round(src_fps, 2),
+            "total_duration_s": round(total_duration, 2),
+            "segment_duration_s": max_duration,
+            "num_segments": num_segments,
+            "text_prompts": {
+                "user_input": prompts,
+                "display": prompts_for_display,
+                "api_calls": prompts_for_api
+            },
+            "segments": all_segment_stats,
+            "merged_totals": merged_totals,
+        }
+
+        # 保存合并统计（详细分段信息）
+        merged_stats_path = os.path.join(output_dir, f"{video_id}_segments_merged.json")
+        with open(merged_stats_path, 'w', encoding='utf-8') as f:
+            json.dump(merged_stats, f, ensure_ascii=False, indent=2)
+
+        # 生成符合 server.py 期望格式的统计文件（用于 Web 页面显示）
+        # 计算总帧数
+        total_frames_processed = sum(seg.get("frames_processed", 0) for seg in all_segment_stats)
+
+        # 使用第一个片段的视频作为示例视频
+        first_segment_video = all_segment_stats[0].get("annotated_video", "") if all_segment_stats else ""
+
+        # 生成符合 server.py 期望的格式
+        server_stats = {
+            "video_id":             video_id,
+            "source_path":          video_path,
+            "processed_at":         datetime.now().isoformat(timespec='seconds'),
+            "resolution":           f"{W}x{H}",
+            "source_fps":           round(src_fps, 2),
+            "duration_processed_s": round(total_duration, 2),  # 总时长
+            "sample_fps":           sample_fps,
+            "frames_processed":     total_frames_processed,     # 总帧数
+            "annotated_video":      first_segment_video,        # 使用第一个片段的视频
+            "api_endpoint":         f"{api_base_url}{API_ENDPOINT}",
+            "text_prompts": {
+                "user_input": prompts,
+                "display": prompts_for_display,
+                "api_calls": prompts_for_api
+            },
+            "thresholds": {
+                "box": BOX_THRESHOLD,
+                "text": TEXT_THRESHOLD,
+                "nms": NMS_THRESHOLD
+            },
+            "totals":               merged_totals,              # 合并后的统计
+            "per_frame":            [],                         # 合并所有片段的逐帧数据
+        }
+
+        # 合并所有片段的逐帧数据
+        for seg in all_segment_stats:
+            server_stats["per_frame"].extend(seg.get("per_frame", []))
+
+        # 保存为 server.py 期望的文件名
+        server_stats_path = os.path.join(output_dir, f"{video_id}_stats.json")
+        with open(server_stats_path, 'w', encoding='utf-8') as f:
+            json.dump(server_stats, f, ensure_ascii=False, indent=2)
+
+        print(f"\n{'='*60}")
+        print(f"[分段处理完成] 共处理 {num_segments} 个片段")
+        print(f"[合并统计] → {merged_stats_path}")
+        print(f"[Web统计] → {server_stats_path}")
+        print(f"[总计] {merged_totals}")
+        print(f"{'='*60}\n")
+
+        return merged_stats
+
+    # 非分段模式：直接处理整个视频的前 max_duration 秒
+    return _process_single_segment(
+        video_path=video_path,
+        segment_id=video_id,
+        output_dir=output_dir,
+        api_base_url=api_base_url,
+        prompts=prompts,
+        prompts_for_api=prompts_for_api,
+        prompts_for_display=prompts_for_display,
+        en_to_zh_map=en_to_zh_map,
+        max_duration=max_duration,
+        start_time=0,
+        sample_fps=sample_fps,
+        output_fps=output_fps,
+        use_slicing=use_slicing,
+        tile_cols=tile_cols,
+        tile_rows=tile_rows,
+        tile_overlap=tile_overlap,
+    )
+
+
+def _process_single_segment(video_path, segment_id, output_dir,
+                            api_base_url, prompts,
+                            prompts_for_api, prompts_for_display, en_to_zh_map,
+                            max_duration, start_time,
+                            sample_fps, output_fps,
+                            use_slicing, tile_cols, tile_rows, tile_overlap):
+    """
+    处理单个视频片段
+
+    Args:
+        video_path: 输入视频路径
+        segment_id: 片段 ID
+        output_dir: 输出目录
+        api_base_url: API 基础 URL
+        prompts: 原始提示词（用于 JSON）
+        prompts_for_api: 用于 API 调用的英文提示词
+        prompts_for_display: 用于显示的中文提示词
+        en_to_zh_map: 英文→中文映射表
+        max_duration: 处理时长（秒）
+        start_time: 起始时间（秒）
         sample_fps: 采样帧率
         output_fps: 输出视频帧率
         use_slicing: 是否使用切片模式
@@ -653,16 +1188,7 @@ def process_video(video_path, video_id=None, output_dir=OUTPUT_DIR,
     Returns:
         统计信息字典
     """
-    if api_base_url is None:
-        raise ValueError("必须提供 --api_url 参数")
-
-    if prompts is None:
-        prompts = TEXT_PROMPTS
-
     os.makedirs(output_dir, exist_ok=True)
-
-    if video_id is None:
-        video_id = os.path.splitext(os.path.basename(video_path))[0]
 
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -672,17 +1198,23 @@ def process_video(video_path, video_id=None, output_dir=OUTPUT_DIR,
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     W = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     H = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    max_frame       = min(int(src_fps * max_duration), total_frames)
+
+    # 计算当前片段的帧范围
+    start_frame = int(start_time * src_fps)
+    end_frame = min(int((start_time + max_duration) * src_fps), total_frames)
+    segment_frame_count = end_frame - start_frame
     sample_interval = max(1, round(src_fps / sample_fps))
 
-    print(f"[INFO] 视频: {video_path}  分辨率: {W}×{H}  源FPS: {src_fps:.1f}")
-    print(f"[INFO] 处理前 {max_duration}s ({max_frame} 帧)，每 {sample_interval} 帧取 1 帧")
+    print(f"[INFO] 片段: {segment_id}")
+    print(f"[INFO] 分辨率: {W}×{H}  源FPS: {src_fps:.1f}")
+    print(f"[INFO] 时间范围: {start_time:.1f}s - {start_time + max_duration:.1f}s")
+    print(f"[INFO] 帧范围: {start_frame} - {end_frame} (共 {segment_frame_count} 帧)")
+    print(f"[INFO] 采样: 每 {sample_interval} 帧取 1 帧")
     print(f"[INFO] API: {api_base_url}")
-    print(f"[INFO] 分割类别: {prompts}")
     if use_slicing:
         print(f"[INFO] 切片模式: {tile_cols}×{tile_rows} 重叠={int(tile_overlap*100)}%")
 
-    out_video_path = os.path.join(output_dir, f"{video_id}_seg_annotated.mp4")
+    out_video_path = os.path.join(output_dir, f"{segment_id}_annotated.mp4")
 
     # 用 PyAV 写 H.264
     av_output = av.open(out_video_path, 'w')
@@ -697,39 +1229,43 @@ def process_video(video_path, video_id=None, output_dir=OUTPUT_DIR,
 
     total_counts = {}
     per_frame    = []
-    frame_idx    = 0
     sampled      = 0
 
     print(f"\n[开始处理]")
     first_frame = True
 
-    while frame_idx < max_frame:
+    # 跳帧到起始位置
+    cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+
+    for frame_idx in range(start_frame, end_frame):
         ret, frame_bgr = cap.read()
         if not ret:
             break
 
-        if frame_idx % sample_interval == 0:
+        if (frame_idx - start_frame) % sample_interval == 0:
             timestamp = frame_idx / src_fps
 
             # 调用分割 API（根据配置选择切片或全帧）
             if use_slicing:
                 masks = api.segment_frame_with_slicing(
-                    frame_bgr, prompts,
+                    frame_bgr, prompts_for_api,
                     BOX_THRESHOLD, TEXT_THRESHOLD, NMS_THRESHOLD,
                     tile_cols, tile_rows, tile_overlap
                 )
             else:
                 masks = api.segment_frame(
-                    frame_bgr, prompts,
+                    frame_bgr, prompts_for_api,
                     BOX_THRESHOLD, TEXT_THRESHOLD, NMS_THRESHOLD
                 )
 
-            # 逐帧统计
+            # 逐帧统计（统一使用中文名称）
             frame_counts = {}
             for mask in masks:
-                name = mask["name"]
-                frame_counts[name] = frame_counts.get(name, 0) + 1
-                total_counts[name] = total_counts.get(name, 0) + 1
+                name_en = mask["name"]
+                name_zh = _get_chinese_name_with_map(name_en, en_to_zh_map)
+                # 统一使用中文名称统计
+                frame_counts[name_zh] = frame_counts.get(name_zh, 0) + 1
+                total_counts[name_zh] = total_counts.get(name_zh, 0) + 1
 
             per_frame.append({
                 "frame_idx": frame_idx,
@@ -738,11 +1274,8 @@ def process_video(video_path, video_id=None, output_dir=OUTPUT_DIR,
                 "num_masks": len(masks),
             })
 
-            # 绘制 masks
-            annotated = draw_masks(frame_bgr, masks, timestamp)
-            # cv2.imshow(f"Segmentation - {video_id}", annotated)
-            # cv2.waitKey(1)
-            cv2.imwrite(f"{video_id}_seg_frame_{frame_idx:05d}.jpg", annotated)
+            # 绘制 masks（传入映射表用于中文转换）
+            annotated = draw_masks_with_map(frame_bgr, masks, timestamp, en_to_zh_map)
 
             # 写入视频
             annotated_rgb = cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB)
@@ -761,8 +1294,6 @@ def process_video(video_path, video_id=None, output_dir=OUTPUT_DIR,
             sampled += 1
             time.sleep(0.5)
 
-        frame_idx += 1
-
     # 刷新剩余帧
     for pkt in av_stream.encode():
         av_output.mux(pkt)
@@ -770,17 +1301,23 @@ def process_video(video_path, video_id=None, output_dir=OUTPUT_DIR,
     cap.release()
 
     stats = {
-        "video_id":             video_id,
+        "video_id":             segment_id,  # 使用 segment_id 作为 video_id，使 server.py 能正确读取片段统计
         "source_path":          video_path,
         "processed_at":         datetime.now().isoformat(timespec='seconds'),
         "resolution":           f"{W}x{H}",
         "source_fps":           round(src_fps, 2),
-        "duration_processed_s": max_duration,
+        "start_time_s":         round(start_time, 2),
+        "end_time_s":           round(start_time + max_duration, 2),
+        "duration_processed_s": round(max_duration, 2),
         "sample_fps":           sample_fps,
         "frames_processed":     sampled,
-        "annotated_video":      f"{video_id}_seg_annotated.mp4",
+        "annotated_video":      f"{segment_id}_annotated.mp4",
         "api_endpoint":         f"{api_base_url}{API_ENDPOINT}",
-        "text_prompts":         prompts,
+        "text_prompts": {
+            "user_input": prompts,
+            "display": prompts_for_display,
+            "api_calls": prompts_for_api
+        },
         "thresholds": {
             "box": BOX_THRESHOLD,
             "text": TEXT_THRESHOLD,
@@ -790,7 +1327,7 @@ def process_video(video_path, video_id=None, output_dir=OUTPUT_DIR,
         "per_frame":            per_frame,
     }
 
-    stats_path = os.path.join(output_dir, f"{video_id}_seg_stats.json")
+    stats_path = os.path.join(output_dir, f"{segment_id}_stats.json")
     with open(stats_path, 'w', encoding='utf-8') as f:
         json.dump(stats, f, ensure_ascii=False, indent=2)
 
@@ -808,9 +1345,18 @@ if __name__ == "__main__":
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
+  # 基本用法（处理前N秒）
   python drone_analysis_seg.py --video ./data/test.mp4 --api_url http://localhost:8000
   python drone_analysis_seg.py --video ./data/test.mp4 --api_url http://192.168.1.154:8000 --prompts "icon tower" "utility pole"
   python drone_analysis_seg.py --video ./data/test.mp4 --api_url http://localhost:8000 --duration 5
+
+  # 使用切片模式（SAHI算法）
+  python drone_analysis_seg.py --video ./data/test.mp4 --api_url http://localhost:8000 --use_slicing
+  python .\\drone_analysis_seg.py --video V:\\datasets\\2026\\4K_video\\DJI_20260125104749_0001_V.MP4 --api_url http://192.168.1.154:8000 --video_id video007 --duration 10 --prompts "铁塔" "光纤" "电线杆" --use_slicing
+
+  # 分段模式（将完整视频按duration分割为多个片段）
+  python drone_analysis_seg.py --video ./data/test.mp4 --api_url http://localhost:8000 --duration 10 --split_segments
+  python .\\drone_analysis_seg.py --video V:\\datasets\\2026\\4K_video\\DJI_20260125104749_0001_V.MP4 --api_url http://192.168.1.154:8000 --duration 30 --prompts "铁塔" "光纤" "电线杆" --split_segments --use_slicing
         """
     )
     parser.add_argument("--video",      required=True,       help="输入视频路径")
@@ -822,6 +1368,8 @@ if __name__ == "__main__":
     parser.add_argument("--prompts",    nargs="+",           help="分割类别列表 (如: 'icon tower' 'utility pole' 'street light')", default=None)
     parser.add_argument("--duration",   type=int,            help="处理前N秒 (默认: 10)", default=MAX_DURATION)
     parser.add_argument("--sample_fps", type=int,            help="采样帧率 (默认: 5)", default=SAMPLE_FPS)
+    # 分段参数
+    parser.add_argument("--split_segments", action="store_true", help="启用分段模式：将完整视频按duration分割为多个片段处理")
     # 切片参数
     parser.add_argument("--use_slicing", action="store_true", help="启用切片模式（SAHI算法）")
     parser.add_argument("--tile_cols",  type=int,            help="横向分块数 (默认: 4)", default=TILE_COLS)
@@ -831,6 +1379,7 @@ if __name__ == "__main__":
 
     # 命令行参数覆盖配置
     use_slicing = args.use_slicing
+    split_segments = args.split_segments
     tile_cols = args.tile_cols
     tile_rows = args.tile_rows
     tile_overlap = args.tile_overlap
@@ -847,4 +1396,5 @@ if __name__ == "__main__":
         tile_cols=tile_cols,
         tile_rows=tile_rows,
         tile_overlap=tile_overlap,
+        split_segments=split_segments,
     )

@@ -1,0 +1,52 @@
+1、siha切片算法路径资料：D:\code\github\sahi
+2、根据文字进行检测api：/BVS/GROUNDED_SEGMENT/PREDICT_BY_LABELS，输入：{
+  "input_image": "",
+  "img_type": "bsae64/url/local",
+  "text_prompt_list": [
+    "person"
+  ],
+  "box_threshold": 0.25,
+  "text_threshold": 0.25,
+  "nms_threshold": 0.8,
+  "ret_image": false,
+  "save_result_image": false
+}
+输出：
+{
+  "code": 200,
+  "message": "ok",
+  "masks": [
+    {
+      "score": 0.8045988082885742,
+      "name": "person",
+      "area": 29284,
+      "mask": [
+        [
+          [
+            177,
+            130
+          ],
+          ...
+        ]
+      ]
+    },
+    {
+      "score": 0.8003727197647095,
+      "name": "person",
+      "area": 28585,
+      "mask": [
+        [
+          ...
+        ]
+      ]
+    },
+    ...
+  ],
+  "width": 705,
+  "height": 468,
+  "maskImage": ""
+}
+
+3、4k视频测试文件：V:\datasets\2026\4K_video\DJI_20260125104749_0001_V.MP4
+
+

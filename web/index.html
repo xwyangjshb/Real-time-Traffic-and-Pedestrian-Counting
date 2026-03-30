@@ -317,10 +317,18 @@
   function initCharts() {
     barChart  = echarts.init(document.getElementById('chart-bar'),  'dark');
     lineChart = echarts.init(document.getElementById('chart-line'), 'dark');
+
+    // 窗口大小改变时重新调整图表尺寸
     window.addEventListener('resize', () => {
       barChart.resize();
       lineChart.resize();
     });
+
+    // 延迟执行一次 resize，确保初始渲染时容器尺寸正确
+    setTimeout(() => {
+      barChart.resize();
+      lineChart.resize();
+    }, 200);
   }
 
   // ── 加载视频列表 ────────────────────────────────────────────────────────────
@@ -400,7 +408,7 @@
     barChart.setOption({
       backgroundColor: 'transparent',
       tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
-      grid: { left: 40, right: 20, top: 20, bottom: 30 },
+      grid: { left: 50, right: 30, top: 30, bottom: 30 },  // 增加左右边距
       xAxis: {
         type: 'category',
         data: categories,
@@ -420,6 +428,9 @@
         label: { show: true, position: 'top', color: '#e6edf3', fontWeight: 600 },
       }],
     });
+
+    // 确保图表在数据更新后重新计算尺寸
+    setTimeout(() => barChart.resize(), 100);
   }
 
   // ── 更新视频播放器 ──────────────────────────────────────────────────────────
@@ -466,11 +477,16 @@
         textStyle: { color: '#8b949e' },
         top: 4,
       },
-      grid: { left: 40, right: 20, top: 36, bottom: 30 },
+      grid: { left: 50, right: 30, top: 40, bottom: 50 },  // 增加左右边距，底部留出更多空间给标签
       xAxis: {
         type: 'category',
         data: ts,
-        axisLabel: { color: '#8b949e', interval: Math.floor(ts.length / 10) || 0 },
+        axisLabel: {
+          color: '#8b949e',
+          interval: 'auto',  // 自动计算间隔
+          rotate: ts.length > 20 ? 45 : 0,  // 数据点多时旋转标签45度
+          fontSize: 11,
+        },
         axisLine: { lineStyle: { color: '#30363d' } },
       },
       yAxis: {
@@ -481,6 +497,9 @@
       },
       series,
     });
+
+    // 确保图表在数据更新后重新计算尺寸
+    setTimeout(() => lineChart.resize(), 100);
   }
 
   // ── 启动 ────────────────────────────────────────────────────────────────────
